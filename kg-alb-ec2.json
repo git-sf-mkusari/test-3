@@ -1,0 +1,199 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "This template creates an Application Load Balancer along with two public subnets and EC2 instance as well, into one of the public subnets",
+    "Parameters": {
+        "ExportVpcStackName": {
+            "Description": "The name of the vpc stack that exports values",
+            "Type": "String"
+        },
+        "KeyName": {
+            "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+        }
+    },
+    "Resources": {
+        "ApplicationLoadBalancer": {
+            "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+            "Properties": {
+                "Name": "MyApplicationLoadBalancer",
+                "SecurityGroups": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${ExportVpcStackName}-ALBSecurityGroup"
+                        }
+                    }
+                ],
+                "Subnets": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${ExportVpcStackName}-PublicSubnet1"
+                        }
+                    },
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${ExportVpcStackName}-PublicSubnet2"
+                        }
+                    }
+                ]
+            }
+        },
+        "ALBListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties": {
+                "DefaultActions": [
+                    {
+                        "Type": "forward",
+                        "TargetGroupArn": {
+                            "Ref": "ALBTargetGroup"
+                        }
+                    }
+                ],
+                "LoadBalancerArn": {
+                    "Ref": "ApplicationLoadBalancer"
+                },
+                "Port": 80,
+                "Protocol": "HTTP"
+            }
+        },
+        "ALBTargetGroup": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "HealthCheckIntervalSeconds": 15,
+                "HealthCheckPath": "/",
+                "HealthCheckTimeoutSeconds": 10,
+                "HealthyThresholdCount": 2,
+                "Name": "MyWebServers",
+                "Port": 80,
+                "Protocol": "HTTP",
+                "Targets": [
+                    {
+                        "Id": {
+                            "Ref": "EC2Instance"
+                        },
+                        "Port": 80
+                    }
+                ],
+                "TargetType": "instance",
+                "UnhealthyThresholdCount": 5,
+                "VpcId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${ExportVpcStackName}-VPC"
+                    }
+                }
+            }
+        },
+        "EC2Instance": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "InstanceType": "t2.micro",
+                "SubnetId": {
+                    "Fn::ImportValue": {
+                        "Fn::Sub": "${ExportVpcStackName}-PublicSubnet1"
+                    }
+                },
+                "SecurityGroupIds": [
+                    {
+                        "Fn::ImportValue": {
+                            "Fn::Sub": "${ExportVpcStackName}-EC2SecurityGroup"
+                        }
+                    }
+                ],
+                "KeyName": {
+                    "Ref": "KeyName"
+                },
+                "ImageId": "ami-09d4a659cdd8677be",
+                "IamInstanceProfile": {
+                    "Ref": "DemoInstanceProfile"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "Malsor Kusari"
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Sub": "#!/bin/bash -xe\nsudo su\nyum update -y\ncurl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"\nunzip awscliv2.zip\nsudo ./aws/install\ncurl http://169.254.169.254/latest/meta-data/instance-id            \n"
+                    }
+                }
+            }
+        },
+        "DemoInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "InstanceProfileName": "demo-ec2-instance-profile",
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "DemoEc2InstanceRole"
+                    }
+                ]
+            }
+        },
+        "DemoEc2InstanceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "RoleName": "demo-ec2-instance-role-aws-1",
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/"
+            }
+        },
+        "DemoInstancesqsPolicy": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyName": "DemosqsPolicy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "sqs:*"
+                            ],
+                            "Resource": [
+                                "*"
+                            ]
+                        }
+                    ]
+                },
+                "Roles": [
+                    {
+                        "Ref": "DemoEc2InstanceRole"
+                    }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "ApplicationLoadBalancerDnsName": {
+            "Description": "Application Load Balancer DNS Name",
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${AWS::StackName}-ApplicationLoadBalancerDnsName"
+                }
+            },
+            "Value": {
+                "Fn::GetAtt": [
+                    "ApplicationLoadBalancer",
+                    "DNSName"
+                ]
+            }
+        }
+    }
+}
